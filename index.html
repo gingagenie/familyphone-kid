@@ -8,16 +8,21 @@
     :root {
       color-scheme: dark;
     }
-    body {
+    html, body {
       margin: 0;
+      padding: 0;
+      height: 100%;
+    }
+    body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: radial-gradient(circle at top, #1f2937, #020617 60%);
       color: #e5e7eb;
+      overflow: hidden; /* stop page from growing */
     }
     .app {
+      height: 100vh;              /* full screen */
       max-width: 500px;
       margin: 0 auto;
-      min-height: 100vh;
       display: flex;
       flex-direction: column;
       padding: 12px;
@@ -29,6 +34,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      flex-shrink: 0;
     }
     header h1 {
       font-size: 18px;
@@ -62,6 +68,7 @@
       padding: 16px;
       box-shadow: 0 16px 40px rgba(0,0,0,0.4);
       margin-top: 12px;
+      flex-shrink: 0; /* don't stretch cards */
     }
     label {
       display: block;
@@ -88,13 +95,16 @@
       font-size: 12px;
       opacity: 0.7;
     }
+
+    /* Chat shell takes remaining height */
     .chat-shell {
       flex: 1;
       display: flex;
       flex-direction: column;
       margin-top: 8px;
-      min-height: 0;
+      min-height: 0;       /* allow children to shrink */
     }
+
     .chat-header {
       padding: 6px 10px;
       font-size: 13px;
@@ -104,6 +114,7 @@
       background: rgba(15,23,42,0.8);
       border-radius: 999px;
       margin-bottom: 8px;
+      flex-shrink: 0;
     }
     .avatar {
       width: 28px;
@@ -128,14 +139,18 @@
       font-size: 11px;
       opacity: 0.7;
     }
+
     .chat-log {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
       padding: 8px 4px;
       border-radius: 16px;
       background: radial-gradient(circle at top left, #020617, #020617 30%, #020617 100%);
       border: 1px solid #020617;
+      max-height: 60vh; /* hard cap so screen never grows */
     }
+
     .bubble-row {
       display: flex;
       margin-bottom: 6px;
@@ -166,10 +181,12 @@
       margin-top: 2px;
       text-align: right;
     }
+
     .chat-input-row {
       display: flex;
       gap: 8px;
       margin-top: 6px;
+      flex-shrink: 0;
     }
     .chat-input-row input {
       margin-bottom: 0;
@@ -288,7 +305,6 @@
     let currentKid = null;
     let pollId = null; // for polling new messages
 
-    // ---- helpers ----
     function show(el) { el.classList.remove("hidden"); }
     function hide(el) { el.classList.add("hidden"); }
 
@@ -321,6 +337,7 @@
         })
         .join("");
       chatLog.innerHTML = html;
+      // Auto-scroll to bottom
       chatLog.scrollTop = chatLog.scrollHeight;
     }
 
@@ -360,7 +377,6 @@
       hide(authCard);
       kidHeaderSub.textContent = "Loading family…";
 
-      // 1) Find family (use first like parent app)
       const { data: families, error: famErr } = await client
         .from("families")
         .select("*")
@@ -378,7 +394,6 @@
       currentFamily = families[0];
       kidHeaderSub.textContent = currentFamily.name;
 
-      // 2) Load kids
       const { data: kids, error: kidsErr } = await client
         .from("kids")
         .select("*")
@@ -394,14 +409,12 @@
         return;
       }
 
-      // Populate select
       kidSelect.innerHTML = kids
         .map((k) => `<option value="${k.id}">${k.display_name}</option>`)
         .join("");
 
       show(kidSelectCard);
 
-      // Auto-lock to previously chosen kid if present
       const storedKidId = localStorage.getItem("familyphone_kid_id");
       const storedKidName = localStorage.getItem("familyphone_kid_name");
       if (storedKidId && kids.find((k) => k.id === storedKidId)) {
@@ -419,14 +432,10 @@
       hide(kidSelectCard);
       show(chatSection);
 
-      // Clear any old poller
       if (pollId) clearInterval(pollId);
-      // Start polling every 3s
-      loadMessagesOnce(); // initial load
-      pollId = setInterval(loadMessagesOnce, 3000);
+      loadMessagesOnce();                    // initial load
+      pollId = setInterval(loadMessagesOnce, 3000); // poll every 3s
     }
-
-    // ---- Event handlers ----
 
     authSignInBtn.addEventListener("click", async () => {
       authStatus.textContent = "";
@@ -486,7 +495,7 @@
         family_id: currentFamily.id,
         sender_type: "kid",
         sender_kid_id: currentKid.id,
-        sender_user_id: currentUser.id, // still linked to auth user
+        sender_user_id: currentUser.id,
         text,
         has_attachments: false,
       });
@@ -496,12 +505,11 @@
         alert("Error sending message – check console");
       } else {
         chatInput.value = "";
-        // Next poll in <= 3 seconds will bring it in
+        // next poll will pull it in + auto-scroll
       }
       chatInput.disabled = false;
     });
 
-    // ---- Init ----
     loadSession();
   </script>
 </body>
