@@ -286,7 +286,7 @@
     let currentUser = null;
     let currentFamily = null;
     let currentKid = null;
-    let messagesSub = null;
+    let pollId = null; // for polling new messages
 
     // ---- helpers ----
     function show(el) { el.classList.remove("hidden"); }
@@ -337,33 +337,6 @@
         return;
       }
       renderMessages(data || []);
-    }
-
-    function subscribeMessages() {
-      if (!currentFamily) return;
-
-      if (messagesSub) {
-        client.removeChannel(messagesSub);
-      }
-
-      messagesSub = client
-        .channel("kid_chat_" + currentFamily.id)
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "messages",
-            filter: "family_id=eq." + currentFamily.id,
-          },
-          async (payload) => {
-            // easiest: just reload all messages when a new one lands
-            await loadMessagesOnce();
-          }
-        )
-        .subscribe((status) => {
-          console.log("kid realtime status:", status);
-        });
     }
 
     async function loadSession() {
@@ -445,8 +418,12 @@
       kidNameLabel.textContent = kid.display_name;
       hide(kidSelectCard);
       show(chatSection);
-      subscribeMessages();    // realtime sub
-      loadMessagesOnce();     // initial load
+
+      // Clear any old poller
+      if (pollId) clearInterval(pollId);
+      // Start polling every 3s
+      loadMessagesOnce(); // initial load
+      pollId = setInterval(loadMessagesOnce, 3000);
     }
 
     // ---- Event handlers ----
@@ -478,6 +455,7 @@
       currentKid = null;
       localStorage.removeItem("familyphone_kid_id");
       localStorage.removeItem("familyphone_kid_name");
+      if (pollId) clearInterval(pollId);
       hide(chatSection);
       hide(kidSelectCard);
       show(authCard);
@@ -492,6 +470,7 @@
     });
 
     switchKidBtn.addEventListener("click", () => {
+      if (pollId) clearInterval(pollId);
       show(kidSelectCard);
       hide(chatSection);
     });
@@ -517,7 +496,7 @@
         alert("Error sending message – check console");
       } else {
         chatInput.value = "";
-        // realtime will refresh
+        // Next poll in <= 3 seconds will bring it in
       }
       chatInput.disabled = false;
     });
