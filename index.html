@@ -100,14 +100,12 @@
       font-size: 12px;
       opacity: 0.7;
     }
-
     .row {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
     }
 
-    /* Chat shell */
     .chat-shell {
       flex: 1;
       display: flex;
@@ -149,7 +147,6 @@
       font-size: 11px;
       opacity: 0.7;
     }
-
     .chat-log {
       flex: 1;
       min-height: 0;
@@ -160,7 +157,6 @@
       border: 1px solid #020617;
       max-height: 60vh;
     }
-
     .bubble-row {
       display: flex;
       margin-bottom: 6px;
@@ -191,7 +187,6 @@
       margin-top: 2px;
       text-align: right;
     }
-
     .chat-input-row {
       display: flex;
       gap: 8px;
@@ -206,7 +201,6 @@
       white-space: nowrap;
       padding-inline: 16px;
     }
-
     .hidden {
       display: none !important;
     }
@@ -277,7 +271,7 @@
       <p id="auth-status" class="muted" style="margin-top:6px;"></p>
     </section>
 
-    <!-- KID SELECT / QR SETUP CARD (only shown on first setup) -->
+    <!-- KID SELECT / QR SETUP CARD -->
     <section id="kid-select-card" class="card hidden">
       <h2 style="margin-top:0; font-size:16px;">Who is this phone for?</h2>
       <p class="muted">
@@ -309,11 +303,18 @@
         <p class="muted">No messages yet. Say hi 👋</p>
       </div>
       <form id="chat-form" class="chat-input-row">
+        <button type="button" id="kid-attach-btn" class="btn-secondary">📷</button>
         <input
           id="chat-input"
           type="text"
           autocomplete="off"
           placeholder="Type a message…"
+        />
+        <input
+          type="file"
+          id="kid-image-input"
+          accept="image/*"
+          class="hidden"
         />
         <button type="submit" class="btn-primary">Send</button>
       </form>
@@ -366,6 +367,8 @@
     const chatLog = document.getElementById("chat-log");
     const chatForm = document.getElementById("chat-form");
     const chatInput = document.getElementById("chat-input");
+    const kidAttachBtn = document.getElementById("kid-attach-btn");
+    const kidImageInput = document.getElementById("kid-image-input");
 
     const scannerOverlay = document.getElementById("scanner-overlay");
     const scannerVideo = document.getElementById("scanner-video");
@@ -430,10 +433,29 @@
             minute: "2-digit",
           });
 
+          let content = "";
+          if (m.text) {
+            content += `<div>${m.text}</div>`;
+          }
+          if (m.image_public_url) {
+            content += `
+              <div style="margin-top:4px;">
+                <img
+                  src="${m.image_public_url}"
+                  alt="Photo"
+                  style="max-width:180px; border-radius:12px; display:block;"
+                />
+              </div>
+            `;
+          }
+          if (!content) {
+            content = "<div>(empty)</div>";
+          }
+
           return `
             <div class="bubble-row">
               <div class="${cls}">
-                ${m.text || ""}
+                ${content}
                 <div class="bubble-meta">${senderName} • ${time}</div>
               </div>
             </div>
@@ -457,7 +479,18 @@
         console.error("load messages error", error);
         return;
       }
-      lastMessages = data || [];
+
+      lastMessages = (data || []).map((m) => {
+        if (m.image_url) {
+          const { data: publicData } = client
+            .storage
+            .from("chat_uploads")
+            .getPublicUrl(m.image_url);
+          return { ...m, image_public_url: publicData.publicUrl };
+        }
+        return m;
+      });
+
       renderMessages(lastMessages);
     }
 
@@ -649,7 +682,6 @@
     }
 
     // ---- Event handlers ----
-
     authSignInBtn.addEventListener("click", async () => {
       authStatus.textContent = "";
       const email = authEmail.value.trim();
@@ -702,29 +734,72 @@
       stopScanner();
     });
 
+    kidAttachBtn.addEventListener("click", () => {
+      kidImageInput.click();
+    });
+
     chatForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!currentFamily || !currentKid || !currentUser) return;
+
       const text = chatInput.value.trim();
-      if (!text) return;
+      const file = kidImageInput.files[0];
+
+      if (!text && !file) return;
+
       chatInput.disabled = true;
 
-      const { error } = await client.from("messages").insert({
-        family_id: currentFamily.id,
-        sender_type: "kid",
-        sender_kid_id: currentKid.id,
-        sender_user_id: currentUser.id,
-        text,
-        has_attachments: false,
-      });
+      try {
+        let imagePath = null;
 
-      if (error) {
-        console.error("send message error", error);
-        alert("Error sending message – check console");
-      } else {
+        if (file) {
+          const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+          const fileName =
+            currentFamily.id +
+            "/" +
+            Date.now() +
+            "-" +
+            Math.random().toString(36).slice(2) +
+            "." +
+            ext;
+
+          const { error: uploadError } = await client
+            .storage
+            .from("chat_uploads")
+            .upload(fileName, file);
+
+          if (uploadError) {
+            console.error("upload error", uploadError);
+            alert("Error uploading image.");
+            chatInput.disabled = false;
+            return;
+          }
+
+          imagePath = fileName;
+        }
+
+        const { error } = await client.from("messages").insert({
+          family_id: currentFamily.id,
+          sender_type: "kid",
+          sender_kid_id: currentKid.id,
+          sender_user_id: currentUser.id,
+          text: text || null,
+          has_attachments: !!imagePath,
+          image_url: imagePath,
+        });
+
+        if (error) {
+          throw error;
+        }
+
         chatInput.value = "";
+        kidImageInput.value = "";
+      } catch (err) {
+        console.error("send message error", err);
+        alert("Error sending message – check console");
+      } finally {
+        chatInput.disabled = false;
       }
-      chatInput.disabled = false;
     });
 
     // ---- Init ----
