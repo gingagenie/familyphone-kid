@@ -148,7 +148,7 @@
       border-radius: 16px;
       background: radial-gradient(circle at top left, #020617, #020617 30%, #020617 100%);
       border: 1px solid #020617;
-      max-height: 60vh; /* hard cap so screen never grows */
+      max-height: 60vh; /* cap height so screen never grows */
     }
 
     .bubble-row {
@@ -272,9 +272,9 @@
   <!-- Supabase JS via CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // ====== CONFIG – REPLACE THESE ======
-    const SUPABASE_URL = "https://jllzjhebldumlcqofxpl.supabase.co"; // <- change this
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g";                    // <- and this
+    // ====== CONFIG ======
+    const SUPABASE_URL = "https://jllzjhebldumlcqofxpl.supabase.co"; // your project
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g";                  // <- replace this
 
     const { createClient } = supabase;
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -320,25 +320,49 @@
         chatLog.innerHTML = '<p class="muted">No messages yet. Say hi 👋</p>';
         return;
       }
+
+      const kids = window.allKids || [];
+      const kidMap = kids.reduce((map, k) => {
+        map[k.id] = k;
+        return map;
+      }, {});
+
       const html = msgs
         .map((m) => {
-          const mine = m.sender_type === "kid" && m.sender_kid_id === currentKid?.id;
+          // Is this message from the current kid?
+          const mine =
+            m.sender_type === "kid" && m.sender_kid_id === currentKid?.id;
+
+          let senderName = "Family";
+
+          if (mine) {
+            senderName = "You";
+          } else if (m.sender_type === "kid") {
+            const kid = kidMap[m.sender_kid_id];
+            senderName = kid ? kid.display_name : "Kid";
+          } else if (m.sender_type === "parent") {
+            senderName = "Parent";
+          }
+
           const cls = mine ? "bubble bubble-kid" : "bubble bubble-parent";
-          const time = new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-          const label = mine ? "You" : m.sender_type === "parent" ? "Parent" : "Family";
+          const time = new Date(m.created_at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+
           return `
             <div class="bubble-row">
               <div class="${cls}">
                 ${m.text || ""}
-                <div class="bubble-meta">${label} • ${time}</div>
+                <div class="bubble-meta">${senderName} • ${time}</div>
               </div>
             </div>
           `;
         })
         .join("");
+
       chatLog.innerHTML = html;
-      // Auto-scroll to bottom
-      chatLog.scrollTop = chatLog.scrollHeight;
+      chatLog.scrollTop = chatLog.scrollHeight; // auto-scroll to bottom
     }
 
     async function loadMessagesOnce() {
@@ -408,6 +432,9 @@
         kidHeaderSub.textContent = "No kids added yet – add them in parent app.";
         return;
       }
+
+      // Make kids available globally for name lookups in renderMessages
+      window.allKids = kids;
 
       kidSelect.innerHTML = kids
         .map((k) => `<option value="${k.id}">${k.display_name}</option>`)
