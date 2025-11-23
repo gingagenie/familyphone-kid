@@ -324,6 +324,48 @@
       chatLog.scrollTop = chatLog.scrollHeight;
     }
 
+    async function loadMessagesOnce() {
+      if (!currentFamily) return;
+      const { data, error } = await client
+        .from("messages")
+        .select("*")
+        .eq("family_id", currentFamily.id)
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error("load messages error", error);
+        return;
+      }
+      renderMessages(data || []);
+    }
+
+    function subscribeMessages() {
+      if (!currentFamily) return;
+
+      if (messagesSub) {
+        client.removeChannel(messagesSub);
+      }
+
+      messagesSub = client
+        .channel("kid_chat_" + currentFamily.id)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "messages",
+            filter: "family_id=eq." + currentFamily.id,
+          },
+          async (payload) => {
+            // easiest: just reload all messages when a new one lands
+            await loadMessagesOnce();
+          }
+        )
+        .subscribe((status) => {
+          console.log("kid realtime status:", status);
+        });
+    }
+
     async function loadSession() {
       const { data, error } = await client.auth.getSession();
       if (error) {
@@ -345,11 +387,12 @@
       hide(authCard);
       kidHeaderSub.textContent = "Loading family…";
 
-      // Find family (use first like parent app)
+      // 1) Find family (use first like parent app)
       const { data: families, error: famErr } = await client
         .from("families")
         .select("*")
         .order("created_at", { ascending: true });
+
       if (famErr) {
         console.error("families error", famErr);
         kidHeaderSub.textContent = "Error loading family";
@@ -362,12 +405,13 @@
       currentFamily = families[0];
       kidHeaderSub.textContent = currentFamily.name;
 
-      // Load kids
+      // 2) Load kids
       const { data: kids, error: kidsErr } = await client
         .from("kids")
         .select("*")
         .eq("family_id", currentFamily.id)
         .order("created_at", { ascending: true });
+
       if (kidsErr) {
         console.error("kids error", kidsErr);
         return;
@@ -384,7 +428,7 @@
 
       show(kidSelectCard);
 
-      // If device already locked to kid (localStorage), auto-select
+      // Auto-lock to previously chosen kid if present
       const storedKidId = localStorage.getItem("familyphone_kid_id");
       const storedKidName = localStorage.getItem("familyphone_kid_name");
       if (storedKidId && kids.find((k) => k.id === storedKidId)) {
@@ -401,40 +445,8 @@
       kidNameLabel.textContent = kid.display_name;
       hide(kidSelectCard);
       show(chatSection);
-      subscribeMessages();
-      loadMessagesOnce();
-    }
-
-    async function loadMessagesOnce() {
-      if (!currentFamily) return;
-      const { data, error } = await client
-        .from("messages")
-        .select("*")
-        .eq("family_id", currentFamily.id)
-        .order("created_at", { ascending: true });
-      if (error) {
-        console.error("load messages error", error);
-        return;
-      }
-      renderMessages(data || []);
-    }
-
-    function subscribeMessages() {
-      if (!currentFamily) return;
-      if (messagesSub) {
-        client.removeChannel(messagesSub);
-      }
-      messagesSub = client
-        .channel("kid_chat_" + currentFamily.id)
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "messages", filter: "family_id=eq." + currentFamily.id },
-          async (payload) => {
-            // Easiest: re-fetch messages for now
-            await loadMessagesOnce();
-          }
-        )
-        .subscribe();
+      subscribeMessages();    // realtime sub
+      loadMessagesOnce();     // initial load
     }
 
     // ---- Event handlers ----
@@ -472,7 +484,7 @@
       kidHeaderSub.textContent = "Sign in to start chatting";
     });
 
-    kidConfirmBtn.addEventListener("click", async () => {
+    kidConfirmBtn.addEventListener("click", () => {
       const kidId = kidSelect.value;
       const kidName = kidSelect.options[kidSelect.selectedIndex]?.text || "Kid";
       if (!kidId) return;
@@ -480,7 +492,6 @@
     });
 
     switchKidBtn.addEventListener("click", () => {
-      // Back to kid selector
       show(kidSelectCard);
       hide(chatSection);
     });
@@ -496,7 +507,7 @@
         family_id: currentFamily.id,
         sender_type: "kid",
         sender_kid_id: currentKid.id,
-        sender_user_id: currentUser.id, // still required by RLS to link to auth user
+        sender_user_id: currentUser.id, // still linked to auth user
         text,
         has_attachments: false,
       });
@@ -506,7 +517,7 @@
         alert("Error sending message – check console");
       } else {
         chatInput.value = "";
-        // Realtime sub will refresh
+        // realtime will refresh
       }
       chatInput.disabled = false;
     });
