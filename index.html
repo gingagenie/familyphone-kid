@@ -116,6 +116,11 @@
       margin-bottom: 8px;
       flex-shrink: 0;
     }
+    .chat-header-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
     .avatar {
       width: 28px;
       height: 28px;
@@ -128,11 +133,6 @@
       font-weight: 700;
       color: #022c22;
       margin-right: 8px;
-    }
-    .chat-header-left {
-      display: flex;
-      align-items: center;
-      gap: 6px;
     }
     .chat-header-left span {
       display: block;
@@ -227,7 +227,7 @@
       <p id="auth-status" class="muted" style="margin-top:6px;"></p>
     </section>
 
-    <!-- KID SELECT CARD -->
+    <!-- KID SELECT CARD (only shown on first setup, never again unless signed out) -->
     <section id="kid-select-card" class="card hidden">
       <h2 style="margin-top:0; font-size:16px;">Who is this phone for?</h2>
       <label for="kid-select">Choose child</label>
@@ -236,7 +236,7 @@
         This is their phone
       </button>
       <p class="muted" style="margin-top:6px;">
-        You can change this later by signing out.
+        After this, this device will be locked to this child.
       </p>
     </section>
 
@@ -250,9 +250,7 @@
             <span>Family chat only</span>
           </div>
         </div>
-        <button id="switch-kid-btn" class="btn-secondary" style="font-size:11px; padding:4px 10px;">
-          Switch kid
-        </button>
+        <!-- no switch kid button any more -->
       </div>
       <div id="chat-log" class="chat-log">
         <p class="muted">No messages yet. Say hi 👋</p>
@@ -274,7 +272,8 @@
   <script>
     // ====== CONFIG ======
     const SUPABASE_URL = "https://jllzjhebldumlcqofxpl.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g"; // <-- paste your anon key
+    const SUPABASE_ANON_KEY =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g";
 
     const { createClient } = supabase;
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -295,7 +294,6 @@
     const chatSection = document.getElementById("chat-section");
     const kidAvatar = document.getElementById("kid-avatar");
     const kidNameLabel = document.getElementById("kid-name-label");
-    const switchKidBtn = document.getElementById("switch-kid-btn");
     const chatLog = document.getElementById("chat-log");
     const chatForm = document.getElementById("chat-form");
     const chatInput = document.getElementById("chat-input");
@@ -388,7 +386,6 @@
 
     async function loadMembers() {
       if (!currentFamily || !currentUser) return;
-      // This will be filtered by RLS; you’ll see only your own membership row
       const { data, error } = await client
         .from("family_members")
         .select("family_id, user_id, role, display_name")
@@ -427,7 +424,7 @@
       hide(authCard);
       kidHeaderSub.textContent = "Loading family…";
 
-      // 1) Find family (use first for now)
+      // 1) Find family (first for now)
       const { data: families, error: famErr } = await client
         .from("families")
         .select("*")
@@ -462,8 +459,6 @@
       }
 
       allKids = kids;
-      window.allKids = kids;
-
       kidSelect.innerHTML = kids
         .map((k) => `<option value="${k.id}">${k.display_name}</option>`)
         .join("");
@@ -471,14 +466,15 @@
       // 3) Load family_members (for parent display_name)
       await loadMembers();
 
-      show(kidSelectCard);
-
-      // Auto-lock to previously chosen kid if present
+      // 4) Check if this device is already locked to a kid
       const storedKidId = localStorage.getItem("familyphone_kid_id");
       const storedKidName = localStorage.getItem("familyphone_kid_name");
       if (storedKidId && kids.find((k) => k.id === storedKidId)) {
         currentKid = { id: storedKidId, display_name: storedKidName };
         setupForKid(currentKid);
+      } else {
+        // first-time setup – parent must pick a kid once
+        show(kidSelectCard);
       }
     }
 
@@ -542,12 +538,6 @@
       setupForKid({ id: kidId, display_name: kidName });
     });
 
-    switchKidBtn.addEventListener("click", () => {
-      if (pollId) clearInterval(pollId);
-      show(kidSelectCard);
-      hide(chatSection);
-    });
-
     chatForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!currentFamily || !currentKid || !currentUser) return;
@@ -559,7 +549,7 @@
         family_id: currentFamily.id,
         sender_type: "kid",
         sender_kid_id: currentKid.id,
-        sender_user_id: currentUser.id, // link back to the parent account controlling this phone
+        sender_user_id: currentUser.id, // parent account controlling this phone
         text,
         has_attachments: false,
       });
