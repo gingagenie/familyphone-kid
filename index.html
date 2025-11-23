@@ -68,7 +68,7 @@
       padding: 16px;
       box-shadow: 0 16px 40px rgba(0,0,0,0.4);
       margin-top: 12px;
-      flex-shrink: 0; /* don't stretch cards */
+      flex-shrink: 0;
     }
     label {
       display: block;
@@ -273,8 +273,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // ====== CONFIG ======
-    const SUPABASE_URL = "https://jllzjhebldumlcqofxpl.supabase.co"; // your project
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g";                  // <- replace this
+    const SUPABASE_URL = "https://jllzjhebldumlcqofxpl.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g"; // <-- paste your anon key
 
     const { createClient } = supabase;
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -305,6 +305,11 @@
     let currentKid = null;
     let pollId = null; // for polling new messages
 
+    let allKids = [];
+    let allMembers = [];
+    let membersByUserId = {};
+    let lastMessages = [];
+
     function show(el) { el.classList.remove("hidden"); }
     function hide(el) { el.classList.add("hidden"); }
 
@@ -321,15 +326,13 @@
         return;
       }
 
-      const kids = window.allKids || [];
-      const kidMap = kids.reduce((map, k) => {
+      const kidsMap = allKids.reduce((map, k) => {
         map[k.id] = k;
         return map;
       }, {});
 
       const html = msgs
         .map((m) => {
-          // Is this message from the current kid?
           const mine =
             m.sender_type === "kid" && m.sender_kid_id === currentKid?.id;
 
@@ -338,10 +341,12 @@
           if (mine) {
             senderName = "You";
           } else if (m.sender_type === "kid") {
-            const kid = kidMap[m.sender_kid_id];
+            const kid = kidsMap[m.sender_kid_id];
             senderName = kid ? kid.display_name : "Kid";
           } else if (m.sender_type === "parent") {
-            senderName = "Parent";
+            const member = membersByUserId[m.sender_user_id] || null;
+            const displayName = member?.display_name?.trim();
+            senderName = displayName || "Parent";
           }
 
           const cls = mine ? "bubble bubble-kid" : "bubble bubble-parent";
@@ -377,7 +382,28 @@
         console.error("load messages error", error);
         return;
       }
-      renderMessages(data || []);
+      lastMessages = data || [];
+      renderMessages(lastMessages);
+    }
+
+    async function loadMembers() {
+      if (!currentFamily || !currentUser) return;
+      // This will be filtered by RLS; you’ll see only your own membership row
+      const { data, error } = await client
+        .from("family_members")
+        .select("family_id, user_id, role, display_name")
+        .eq("family_id", currentFamily.id);
+
+      if (error) {
+        console.error("family_members error (kid app)", error);
+        return;
+      }
+
+      allMembers = data || [];
+      membersByUserId = allMembers.reduce((map, m) => {
+        map[m.user_id] = m;
+        return map;
+      }, {});
     }
 
     async function loadSession() {
@@ -401,6 +427,7 @@
       hide(authCard);
       kidHeaderSub.textContent = "Loading family…";
 
+      // 1) Find family (use first for now)
       const { data: families, error: famErr } = await client
         .from("families")
         .select("*")
@@ -418,6 +445,7 @@
       currentFamily = families[0];
       kidHeaderSub.textContent = currentFamily.name;
 
+      // 2) Load kids
       const { data: kids, error: kidsErr } = await client
         .from("kids")
         .select("*")
@@ -433,15 +461,19 @@
         return;
       }
 
-      // Make kids available globally for name lookups in renderMessages
+      allKids = kids;
       window.allKids = kids;
 
       kidSelect.innerHTML = kids
         .map((k) => `<option value="${k.id}">${k.display_name}</option>`)
         .join("");
 
+      // 3) Load family_members (for parent display_name)
+      await loadMembers();
+
       show(kidSelectCard);
 
+      // Auto-lock to previously chosen kid if present
       const storedKidId = localStorage.getItem("familyphone_kid_id");
       const storedKidName = localStorage.getItem("familyphone_kid_name");
       if (storedKidId && kids.find((k) => k.id === storedKidId)) {
@@ -463,6 +495,8 @@
       loadMessagesOnce();                    // initial load
       pollId = setInterval(loadMessagesOnce, 3000); // poll every 3s
     }
+
+    // ---- Event handlers ----
 
     authSignInBtn.addEventListener("click", async () => {
       authStatus.textContent = "";
@@ -489,6 +523,9 @@
       currentUser = null;
       currentFamily = null;
       currentKid = null;
+      allKids = [];
+      allMembers = [];
+      membersByUserId = {};
       localStorage.removeItem("familyphone_kid_id");
       localStorage.removeItem("familyphone_kid_name");
       if (pollId) clearInterval(pollId);
@@ -522,7 +559,7 @@
         family_id: currentFamily.id,
         sender_type: "kid",
         sender_kid_id: currentKid.id,
-        sender_user_id: currentUser.id,
+        sender_user_id: currentUser.id, // link back to the parent account controlling this phone
         text,
         has_attachments: false,
       });
@@ -537,6 +574,7 @@
       chatInput.disabled = false;
     });
 
+    // ---- Init ----
     loadSession();
   </script>
 </body>
