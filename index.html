@@ -243,6 +243,49 @@
       margin-top: 8px;
       background: #000;
     }
+
+    /* Image viewer */
+    .image-viewer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15,23,42,0.92);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 60;
+    }
+    .image-viewer-backdrop.show {
+      display: flex;
+    }
+    .image-viewer-inner {
+      position: relative;
+      max-width: 100vw;
+      max-height: 100vh;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .image-viewer-inner img {
+      max-width: 100vw;
+      max-height: 90vh;
+      border-radius: 16px;
+      display: block;
+      margin: 0 auto;
+    }
+    .image-viewer-close {
+      position: absolute;
+      top: 8px;
+      right: 16px;
+      background: rgba(15,23,42,0.8);
+      color: #e5e7eb;
+      border-radius: 999px;
+      border: 1px solid #4b5563;
+      padding: 4px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .chat-image {
+      cursor: zoom-in;
+    }
   </style>
 </head>
 <body>
@@ -335,6 +378,14 @@
     </div>
   </div>
 
+  <!-- IMAGE VIEWER OVERLAY -->
+  <div id="image-viewer" class="image-viewer-backdrop">
+    <div class="image-viewer-inner">
+      <button id="image-viewer-close" class="image-viewer-close">Close ✕</button>
+      <img id="image-viewer-img" src="" alt="Full image" />
+    </div>
+  </div>
+
   <!-- Supabase + jsQR -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
@@ -377,6 +428,10 @@
     const scannerStatus = document.getElementById("scanner-status");
     const scannerCancel = document.getElementById("scanner-cancel");
 
+    const imageViewer = document.getElementById("image-viewer");
+    const imageViewerImg = document.getElementById("image-viewer-img");
+    const imageViewerClose = document.getElementById("image-viewer-close");
+
     let currentUser = null;
     let currentFamily = null;
     let currentKid = null;
@@ -399,6 +454,29 @@
       if (parts.length === 1) return parts[0][0]?.toUpperCase() || "K";
       return (parts[0][0] + parts[1][0]).toUpperCase();
     }
+
+    function openImageViewer(src) {
+      if (!src) return;
+      imageViewerImg.src = src;
+      imageViewer.classList.add("show");
+    }
+
+    function closeImageViewer() {
+      imageViewer.classList.remove("show");
+      imageViewerImg.src = "";
+    }
+
+    imageViewerClose.addEventListener("click", closeImageViewer);
+    imageViewer.addEventListener("click", (e) => {
+      if (e.target === imageViewer) {
+        closeImageViewer();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && imageViewer.classList.contains("show")) {
+        closeImageViewer();
+      }
+    });
 
     function renderMessages(msgs) {
       if (!msgs || msgs.length === 0) {
@@ -445,6 +523,7 @@
                 <img
                   src="${m.image_public_url}"
                   alt="Photo"
+                  class="chat-image"
                   style="max-width:180px; border-radius:12px; display:block;"
                 />
               </div>
@@ -495,6 +574,12 @@
 
       renderMessages(lastMessages);
     }
+
+    chatLog.addEventListener("click", (e) => {
+      const img = e.target.closest("img.chat-image");
+      if (!img) return;
+      openImageViewer(img.src);
+    });
 
     async function loadMembers() {
       if (!currentFamily || !currentUser) return;
