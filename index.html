@@ -318,6 +318,7 @@
         />
         <button type="submit" class="btn-primary">Send</button>
       </form>
+      <p id="kid-image-status" class="muted" style="margin-top:4px; min-height:1em;"></p>
     </section>
   </div>
 
@@ -369,6 +370,7 @@
     const chatInput = document.getElementById("chat-input");
     const kidAttachBtn = document.getElementById("kid-attach-btn");
     const kidImageInput = document.getElementById("kid-image-input");
+    const kidImageStatus = document.getElementById("kid-image-status");
 
     const scannerOverlay = document.getElementById("scanner-overlay");
     const scannerVideo = document.getElementById("scanner-video");
@@ -738,6 +740,14 @@
       kidImageInput.click();
     });
 
+    kidImageInput.addEventListener("change", () => {
+      if (kidImageInput.files[0]) {
+        kidImageStatus.textContent = "Photo attached – tap Send to post it.";
+      } else {
+        kidImageStatus.textContent = "";
+      }
+    });
+
     chatForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!currentFamily || !currentKid || !currentUser) return;
@@ -748,6 +758,7 @@
       if (!text && !file) return;
 
       chatInput.disabled = true;
+      kidImageStatus.textContent = file ? "Uploading photo…" : "Sending…";
 
       try {
         let imagePath = null;
@@ -771,6 +782,7 @@
           if (uploadError) {
             console.error("upload error", uploadError);
             alert("Error uploading image.");
+            kidImageStatus.textContent = "Error uploading image.";
             chatInput.disabled = false;
             return;
           }
@@ -794,9 +806,11 @@
 
         chatInput.value = "";
         kidImageInput.value = "";
+        kidImageStatus.textContent = "";
       } catch (err) {
         console.error("send message error", err);
         alert("Error sending message – check console");
+        kidImageStatus.textContent = "Error sending message.";
       } finally {
         chatInput.disabled = false;
       }
