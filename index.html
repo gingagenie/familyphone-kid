@@ -205,6 +205,26 @@
       display: none !important;
     }
 
+    /* location bar */
+    .location-bar {
+      margin-top: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(15,23,42,0.9);
+      border: 1px solid #1f2937;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .location-status {
+      opacity: 0.8;
+    }
+    .location-status strong {
+      opacity: 1;
+    }
+
     /* QR scanner overlay */
     .scanner-backdrop {
       position: fixed;
@@ -342,6 +362,18 @@
           </div>
         </div>
       </div>
+
+      <!-- Location bar -->
+      <div class="location-bar">
+        <div class="location-status">
+          <strong id="location-status-label">Location off</strong><br />
+          <span id="location-last-updated">Not shared yet</span>
+        </div>
+        <button id="share-location-btn" class="btn-secondary" style="font-size:11px; padding-inline:10px;">
+          Share now
+        </button>
+      </div>
+
       <div id="chat-log" class="chat-log">
         <p class="muted">No messages yet. Say hi 👋</p>
       </div>
@@ -432,6 +464,11 @@
     const imageViewerImg = document.getElementById("image-viewer-img");
     const imageViewerClose = document.getElementById("image-viewer-close");
 
+    // Location bar elements
+    const locationStatusLabel = document.getElementById("location-status-label");
+    const locationLastUpdated = document.getElementById("location-last-updated");
+    const shareLocationBtn = document.getElementById("share-location-btn");
+
     let currentUser = null;
     let currentFamily = null;
     let currentKid = null;
@@ -444,6 +481,10 @@
 
     let scannerStream = null;
     let scannerLoopId = null;
+
+    // Location heartbeat
+    let locationHeartbeatId = null;
+    let locationEnabled = false;
 
     function show(el) { el.classList.remove("hidden"); }
     function hide(el) { el.classList.add("hidden"); }
@@ -670,6 +711,88 @@
       }
     }
 
+    function stopLocationHeartbeat() {
+      if (locationHeartbeatId) {
+        clearInterval(locationHeartbeatId);
+        locationHeartbeatId = null;
+      }
+      locationEnabled = false;
+      locationStatusLabel.textContent = "Location off";
+    }
+
+    async function sendLocationOnce(reason = "manual") {
+      if (!currentFamily || !currentKid || !currentUser) return;
+      if (!navigator.geolocation) {
+        locationLastUpdated.textContent = "Location not supported on this device.";
+        return;
+      }
+
+      return new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            const { latitude, longitude, accuracy } = pos.coords;
+
+            try {
+              const { error } = await client.from("kid_locations").insert({
+                family_id: currentFamily.id,
+                kid_id: currentKid.id,
+                lat: latitude,
+                lng: longitude,
+                accuracy,
+              });
+              if (error) {
+                console.error("kid_locations insert error", error);
+                if (reason === "manual") {
+                  locationLastUpdated.textContent = "Couldn’t send location.";
+                }
+                resolve(false);
+                return;
+              }
+
+              const now = new Date();
+              locationLastUpdated.textContent =
+                "Last shared at " +
+                now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+              locationStatusLabel.textContent = "Location on (auto-update)";
+
+              resolve(true);
+            } catch (e) {
+              console.error("location insert error", e);
+              if (reason === "manual") {
+                locationLastUpdated.textContent = "Couldn’t send location.";
+              }
+              resolve(false);
+            }
+          },
+          (err) => {
+            console.error("geolocation error", err);
+            if (reason === "manual") {
+              locationLastUpdated.textContent =
+                "Location denied – check settings.";
+              locationStatusLabel.textContent = "Location off";
+            }
+            resolve(false);
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 60000,
+          }
+        );
+      });
+    }
+
+    function startLocationHeartbeat() {
+      if (locationHeartbeatId) return; // already running
+      locationEnabled = true;
+      locationStatusLabel.textContent = "Location on (auto-update)";
+      // Do one immediately, then every 2 minutes
+      sendLocationOnce("heartbeat");
+      locationHeartbeatId = setInterval(() => {
+        sendLocationOnce("heartbeat");
+      }, 2 * 60 * 1000);
+    }
+
     function setupForKid(kid) {
       currentKid = kid;
       localStorage.setItem("familyphone_kid_id", kid.id);
@@ -682,6 +805,11 @@
       if (pollId) clearInterval(pollId);
       loadMessagesOnce();
       pollId = setInterval(loadMessagesOnce, 3000);
+
+      // Reset location bar & start heartbeat (will ask for permission on first manual tap)
+      locationStatusLabel.textContent = "Location off";
+      locationLastUpdated.textContent = "Tap ‘Share now’ to send your location.";
+      stopLocationHeartbeat();
     }
 
     // ==== QR SCANNER LOGIC ====
@@ -800,6 +928,7 @@
       localStorage.removeItem("familyphone_kid_id");
       localStorage.removeItem("familyphone_kid_name");
       if (pollId) clearInterval(pollId);
+      stopLocationHeartbeat();
       hide(chatSection);
       hide(kidSelectCard);
       show(authCard);
@@ -898,6 +1027,17 @@
         kidImageStatus.textContent = "Error sending message.";
       } finally {
         chatInput.disabled = false;
+      }
+    });
+
+    // Manual share location button
+    shareLocationBtn.addEventListener("click", async () => {
+      if (!currentFamily || !currentKid || !currentUser) return;
+      locationStatusLabel.textContent = "Getting location…";
+      const ok = await sendLocationOnce("manual");
+      if (ok && !locationEnabled) {
+        // Start auto heartbeats after first successful manual share
+        startLocationHeartbeat();
       }
     });
 
