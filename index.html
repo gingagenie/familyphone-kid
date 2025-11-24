@@ -67,6 +67,11 @@
       border: 1px solid #1f2937;
       color: #e5e7eb;
     }
+    .btn-danger {
+      background: #fee2e2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+    }
     .card {
       background: rgba(15,23,42,0.96);
       border-radius: 16px;
@@ -121,7 +126,7 @@
       justify-content: space-between;
       background: rgba(15,23,42,0.8);
       border-radius: 999px;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
       flex-shrink: 0;
     }
     .chat-header-left {
@@ -147,6 +152,30 @@
       font-size: 11px;
       opacity: 0.7;
     }
+    #kid-mode-subline {
+      font-size: 11px;
+      opacity: 0.85;
+    }
+    .mode-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      margin-right: 4px;
+      margin-top: 2px;
+    }
+    .mode-chip-school {
+      background: #fef9c3;
+      color: #92400e;
+    }
+    .mode-chip-quiet {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
     .chat-log {
       flex: 1;
       min-height: 0;
@@ -207,7 +236,7 @@
 
     /* location bar */
     .location-bar {
-      margin-top: 6px;
+      margin-top: 4px;
       padding: 6px 10px;
       border-radius: 999px;
       background: rgba(15,23,42,0.9);
@@ -358,7 +387,8 @@
           <div class="avatar" id="kid-avatar">K</div>
           <div>
             <div id="kid-name-label" style="font-size:13px; font-weight:600;">Kid</div>
-            <span>Family chat only</span>
+            <span id="kid-mode-subline">Family chat only</span>
+            <div id="kid-mode-chips"></div>
           </div>
         </div>
       </div>
@@ -367,7 +397,7 @@
       <div class="location-bar">
         <div class="location-status">
           <strong id="location-status-label">Location off</strong><br />
-          <span id="location-last-updated">Not shared yet</span>
+          <span id="location-last-updated">Tap ‘Share now’ to send your location.</span>
         </div>
         <button id="share-location-btn" class="btn-secondary" style="font-size:11px; padding-inline:10px;">
           Share now
@@ -377,6 +407,7 @@
       <div id="chat-log" class="chat-log">
         <p class="muted">No messages yet. Say hi 👋</p>
       </div>
+
       <form id="chat-form" class="chat-input-row">
         <button type="button" id="kid-attach-btn" class="btn-secondary">📷</button>
         <input
@@ -394,6 +425,13 @@
         <button type="submit" class="btn-primary">Send</button>
       </form>
       <p id="kid-image-status" class="muted" style="margin-top:4px; min-height:1em;"></p>
+
+      <button id="panic-btn" class="btn-danger" style="width:100%; margin-top:4px;">
+        ⚠ I need help
+      </button>
+      <p class="muted" style="margin-top:2px;">
+        For emergencies only – sends an alert and your latest location to your family.
+      </p>
     </section>
   </div>
 
@@ -431,6 +469,7 @@
     const { createClient } = supabase;
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // DOM
     const signOutBtn = document.getElementById("sign-out-btn");
     const kidHeaderSub = document.getElementById("kid-header-sub");
 
@@ -448,12 +487,15 @@
     const chatSection = document.getElementById("chat-section");
     const kidAvatar = document.getElementById("kid-avatar");
     const kidNameLabel = document.getElementById("kid-name-label");
+    const kidModeSubline = document.getElementById("kid-mode-subline");
+    const kidModeChips = document.getElementById("kid-mode-chips");
     const chatLog = document.getElementById("chat-log");
     const chatForm = document.getElementById("chat-form");
     const chatInput = document.getElementById("chat-input");
     const kidAttachBtn = document.getElementById("kid-attach-btn");
     const kidImageInput = document.getElementById("kid-image-input");
     const kidImageStatus = document.getElementById("kid-image-status");
+    const panicBtn = document.getElementById("panic-btn");
 
     const scannerOverlay = document.getElementById("scanner-overlay");
     const scannerVideo = document.getElementById("scanner-video");
@@ -464,11 +506,12 @@
     const imageViewerImg = document.getElementById("image-viewer-img");
     const imageViewerClose = document.getElementById("image-viewer-close");
 
-    // Location bar elements
+    // Location bar
     const locationStatusLabel = document.getElementById("location-status-label");
     const locationLastUpdated = document.getElementById("location-last-updated");
     const shareLocationBtn = document.getElementById("share-location-btn");
 
+    // State
     let currentUser = null;
     let currentFamily = null;
     let currentKid = null;
@@ -485,6 +528,11 @@
     // Location heartbeat
     let locationHeartbeatId = null;
     let locationEnabled = false;
+    let lastLocationAt = null;
+    let locationLabelTimerId = null;
+
+    // Kid settings poll
+    let kidSettingsPollId = null;
 
     function show(el) { el.classList.remove("hidden"); }
     function hide(el) { el.classList.add("hidden"); }
@@ -494,6 +542,57 @@
       const parts = name.trim().split(/\s+/);
       if (parts.length === 1) return parts[0][0]?.toUpperCase() || "K";
       return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+
+    function timeAgo(timestamp) {
+      if (!timestamp) return "";
+      const now = new Date();
+      const then = new Date(timestamp);
+      const diffMs = now - then;
+      if (diffMs < 0) return "just now";
+      const diffMin = Math.floor(diffMs / 60000);
+      if (diffMin < 1) return "just now";
+      if (diffMin === 1) return "1 minute ago";
+      if (diffMin < 60) return diffMin + " minutes ago";
+      const diffHours = Math.floor(diffMin / 60);
+      if (diffHours === 1) return "1 hour ago";
+      if (diffHours < 24) return diffHours + " hours ago";
+      const diffDays = Math.floor(diffHours / 24);
+      if (diffDays === 1) return "1 day ago";
+      return diffDays + " days ago";
+    }
+
+    function applyKidModesToUI() {
+      if (!currentKid) return;
+
+      const hasSchool = !!currentKid.school_mode;
+      const hasQuiet = !!currentKid.quiet_mode;
+
+      kidModeChips.innerHTML = "";
+      let base = "Family chat only";
+
+      if (hasSchool && hasQuiet) {
+        base = "School mode + Quiet hours are ON – only use for important stuff.";
+      } else if (hasSchool) {
+        base = "School mode is ON – learning + important messages only.";
+      } else if (hasQuiet) {
+        base = "Quiet hours are ON – only send messages if important.";
+      }
+
+      kidModeSubline.textContent = base;
+
+      if (hasSchool) {
+        const span = document.createElement("span");
+        span.className = "mode-chip mode-chip-school";
+        span.textContent = "School mode";
+        kidModeChips.appendChild(span);
+      }
+      if (hasQuiet) {
+        const span = document.createElement("span");
+        span.className = "mode-chip mode-chip-quiet";
+        span.textContent = "Quiet hours";
+        kidModeChips.appendChild(span);
+      }
     }
 
     function openImageViewer(src) {
@@ -702,13 +801,15 @@
       await loadMembers();
 
       const storedKidId = localStorage.getItem("familyphone_kid_id");
-      const storedKidName = localStorage.getItem("familyphone_kid_name");
-      if (storedKidId && kids.find((k) => k.id === storedKidId)) {
-        currentKid = { id: storedKidId, display_name: storedKidName };
-        setupForKid(currentKid);
-      } else {
-        show(kidSelectCard);
+      if (storedKidId) {
+        const kid = kids.find((k) => k.id === storedKidId);
+        if (kid) {
+          setupForKid(kid);
+          return;
+        }
       }
+
+      show(kidSelectCard);
     }
 
     function stopLocationHeartbeat() {
@@ -720,11 +821,20 @@
       locationStatusLabel.textContent = "Location off";
     }
 
+    function updateLocationLabelFromLast() {
+      if (!lastLocationAt) {
+        locationLastUpdated.textContent = "Tap ‘Share now’ to send your location.";
+        return;
+      }
+      const ago = timeAgo(lastLocationAt);
+      locationLastUpdated.textContent = "Last shared " + ago + ".";
+    }
+
     async function sendLocationOnce(reason = "manual") {
       if (!currentFamily || !currentKid || !currentUser) return;
       if (!navigator.geolocation) {
         locationLastUpdated.textContent = "Location not supported on this device.";
-        return;
+        return false;
       }
 
       return new Promise((resolve) => {
@@ -742,23 +852,25 @@
               });
               if (error) {
                 console.error("kid_locations insert error", error);
-                if (reason === "manual") {
+                if (reason === "manual" || reason === "panic") {
                   locationLastUpdated.textContent = "Couldn’t send location.";
                 }
                 resolve(false);
                 return;
               }
 
-              const now = new Date();
-              locationLastUpdated.textContent =
-                "Last shared at " +
-                now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+              lastLocationAt = new Date();
+              updateLocationLabelFromLast();
               locationStatusLabel.textContent = "Location on (auto-update)";
+
+              // keep the "ago" label roughly fresh
+              if (locationLabelTimerId) clearInterval(locationLabelTimerId);
+              locationLabelTimerId = setInterval(updateLocationLabelFromLast, 60000);
 
               resolve(true);
             } catch (e) {
               console.error("location insert error", e);
-              if (reason === "manual") {
+              if (reason === "manual" || reason === "panic") {
                 locationLastUpdated.textContent = "Couldn’t send location.";
               }
               resolve(false);
@@ -766,7 +878,7 @@
           },
           (err) => {
             console.error("geolocation error", err);
-            if (reason === "manual") {
+            if (reason === "manual" || reason === "panic") {
               locationLastUpdated.textContent =
                 "Location denied – check settings.";
               locationStatusLabel.textContent = "Location off";
@@ -786,11 +898,42 @@
       if (locationHeartbeatId) return; // already running
       locationEnabled = true;
       locationStatusLabel.textContent = "Location on (auto-update)";
-      // Do one immediately, then every 2 minutes
       sendLocationOnce("heartbeat");
       locationHeartbeatId = setInterval(() => {
         sendLocationOnce("heartbeat");
       }, 2 * 60 * 1000);
+    }
+
+    function stopKidSettingsPoll() {
+      if (kidSettingsPollId) {
+        clearInterval(kidSettingsPollId);
+        kidSettingsPollId = null;
+      }
+    }
+
+    function startKidSettingsPoll() {
+      stopKidSettingsPoll();
+      if (!currentKid) return;
+      kidSettingsPollId = setInterval(refreshCurrentKidSettings, 30000);
+    }
+
+    async function refreshCurrentKidSettings() {
+      if (!currentKid) return;
+      try {
+        const { data, error } = await client
+          .from("kids")
+          .select("*")
+          .eq("id", currentKid.id)
+          .single();
+
+        if (!error && data) {
+          currentKid = data;
+          localStorage.setItem("familyphone_kid_name", currentKid.display_name);
+          applyKidModesToUI();
+        }
+      } catch (err) {
+        console.error("refreshCurrentKidSettings error", err);
+      }
     }
 
     function setupForKid(kid) {
@@ -802,14 +945,19 @@
       hide(kidSelectCard);
       show(chatSection);
 
+      applyKidModesToUI();
+
       if (pollId) clearInterval(pollId);
       loadMessagesOnce();
       pollId = setInterval(loadMessagesOnce, 3000);
 
-      // Reset location bar & start heartbeat (will ask for permission on first manual tap)
       locationStatusLabel.textContent = "Location off";
       locationLastUpdated.textContent = "Tap ‘Share now’ to send your location.";
       stopLocationHeartbeat();
+      lastLocationAt = null;
+      if (locationLabelTimerId) clearInterval(locationLabelTimerId);
+
+      startKidSettingsPoll();
     }
 
     // ==== QR SCANNER LOGIC ====
@@ -889,7 +1037,7 @@
           alert("That child is not in this family.");
           return;
         }
-        setupForKid({ id: kid.id, display_name: kid.display_name });
+        setupForKid(kid);
       } catch (err) {
         console.error("QR parse error", err);
         scannerStatus.textContent = "Could not read QR.";
@@ -929,6 +1077,7 @@
       localStorage.removeItem("familyphone_kid_name");
       if (pollId) clearInterval(pollId);
       stopLocationHeartbeat();
+      stopKidSettingsPoll();
       hide(chatSection);
       hide(kidSelectCard);
       show(authCard);
@@ -937,9 +1086,9 @@
 
     kidConfirmBtn.addEventListener("click", () => {
       const kidId = kidSelect.value;
-      const kidName = kidSelect.options[kidSelect.selectedIndex]?.text || "Kid";
-      if (!kidId) return;
-      setupForKid({ id: kidId, display_name: kidName });
+      const kid = allKids.find((k) => k.id === kidId);
+      if (!kid) return;
+      setupForKid(kid);
     });
 
     scanQrBtn.addEventListener("click", () => {
@@ -970,6 +1119,13 @@
       const file = kidImageInput.files[0];
 
       if (!text && !file) return;
+
+      if (currentKid?.quiet_mode) {
+        const ok = window.confirm(
+          "Quiet hours are ON. Only send this if it's important. Send anyway?"
+        );
+        if (!ok) return;
+      }
 
       chatInput.disabled = true;
       kidImageStatus.textContent = file ? "Uploading photo…" : "Sending…";
@@ -1036,8 +1192,41 @@
       locationStatusLabel.textContent = "Getting location…";
       const ok = await sendLocationOnce("manual");
       if (ok && !locationEnabled) {
-        // Start auto heartbeats after first successful manual share
         startLocationHeartbeat();
+      }
+    });
+
+    // Panic button: send location + urgent message
+    panicBtn.addEventListener("click", async () => {
+      if (!currentFamily || !currentKid || !currentUser) return;
+      const ok = window.confirm(
+        "This is for emergencies only. Send an alert to your family now?"
+      );
+      if (!ok) return;
+
+      panicBtn.disabled = true;
+      panicBtn.textContent = "Sending help alert…";
+
+      try {
+        await sendLocationOnce("panic");
+
+        const { error } = await client.from("messages").insert({
+          family_id: currentFamily.id,
+          sender_type: "kid",
+          sender_kid_id: currentKid.id,
+          sender_user_id: currentUser.id,
+          text: "⚠ I need help. Please check my location.",
+          has_attachments: false,
+          image_url: null,
+        });
+
+        if (error) throw error;
+      } catch (err) {
+        console.error("panic error", err);
+        alert("Error sending alert – try again or call a grown-up.");
+      } finally {
+        panicBtn.disabled = false;
+        panicBtn.textContent = "⚠ I need help";
       }
     });
 
